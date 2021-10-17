@@ -20,14 +20,14 @@ class SecondaryRHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         content_length = int(self.headers['Content-Length'])
         post_data = self.rfile.read(content_length)
-        loaded_json = json.loads(post_data, encoding='utf-8')
+        loaded_json = json.loads(post_data)
         self.server.log = loaded_json
         self._set_response()
         time.sleep(random.randrange(3, 10))  # рандомний
         self.wfile.write("".encode('utf-8'))
 
 
-def run(server_class=HTTPServer, handler_class=SecondaryRHandler, address='', port=8080):
+def run(server_class=HTTPServer, handler_class=SecondaryRHandler, port=9001):
     logging.basicConfig(level=logging.INFO)
     server_address = ('', port)
     httpd = server_class(server_address, handler_class)
@@ -44,6 +44,6 @@ def run(server_class=HTTPServer, handler_class=SecondaryRHandler, address='', po
 
 if __name__ == '__main__':
     if len(argv) == 2:
-        run(address=str(argv[0]), port=int(argv[1]))
+        run(port=int(argv[0]))
     else:
         run()
