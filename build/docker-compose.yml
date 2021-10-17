@@ -9,12 +9,12 @@ services:
   slave1:
     build:
       context: ../
-      dockerfile: build/slave.Dockerfile
+      dockerfile: build/slave2.Dockerfile
     ports:
       - "9001:9001"
   slave2:
     build:
       context: ../
-      dockerfile: build/slave.Dockerfile
+      dockerfile: build/slave2.Dockerfile
     ports:
       - "9002:9001"
