@@ -43,7 +43,4 @@ def run(server_class=HTTPServer, handler_class=SecondaryRHandler, port=9001):
 
 
 if __name__ == '__main__':
-    if len(argv) == 2:
-        run(port=int(argv[0]))
-    else:
-        run()
+    run()

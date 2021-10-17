@@ -21,8 +21,10 @@ class S(BaseHTTPRequestHandler):
         self.wfile.write(body.encode('utf-8'))
 
     def do_POST(self):
-        content_length = int(self.headers['Content-Length'])    # <--- Gets the size of data
-        post_data = self.rfile.read(content_length)     # <--- Gets the data itself
+        # <--- Gets the size of data
+        content_length = int(self.headers['Content-Length'])
+        # <--- Gets the data itself
+        post_data = self.rfile.read(content_length)
 
         # appropriate fmt
         loaded_json = json.loads(post_data)
@@ -32,8 +34,8 @@ class S(BaseHTTPRequestHandler):
         self.wfile.write("".encode('utf-8'))
 
 
-def run(server_class=HTTPServer, handler_class=S, address='', port=8080):
-    server_address = (address, port)
+def run(server_class=HTTPServer, handler_class=S, port=9001):
+    server_address = ('', port)
     httpd = server_class(server_address, handler_class)
     httpd.log = {"records": []}    # variable for log on server
     try:
@@ -44,9 +46,4 @@ def run(server_class=HTTPServer, handler_class=S, address='', port=8080):
 
 
 if __name__ == '__main__':
-    from sys import argv
-
-    if len(argv) == 2:
-        run(address=str(argv[0]), port=int(argv[1]))
-    else:
-        run()
+    run()
