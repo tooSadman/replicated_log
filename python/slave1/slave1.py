@@ -25,9 +25,8 @@ class S(BaseHTTPRequestHandler):
         post_data = self.rfile.read(content_length)     # <--- Gets the data itself
 
         # appropriate fmt
-        loaded_json = json.loads(post_data, encoding='utf-8')
-        # print(post_data)
-        self.server.log = loaded_json
+        loaded_json = json.loads(post_data)
+        self.server.log["records"].append(loaded_json)
 
         self._set_headers()
         self.wfile.write("".encode('utf-8'))
@@ -36,7 +35,7 @@ class S(BaseHTTPRequestHandler):
 def run(server_class=HTTPServer, handler_class=S, address='', port=8080):
     server_address = (address, port)
     httpd = server_class(server_address, handler_class)
-    httpd.log = []    # variable for log on server
+    httpd.log = {"records": []}    # variable for log on server
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
