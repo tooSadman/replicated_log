@@ -23,7 +23,7 @@ class SecondaryRHandler(BaseHTTPRequestHandler):
         loaded_json = json.loads(post_data)
         self.server.log = loaded_json
         self._set_response()
-        time.sleep(random.randrange(3, 10))  # рандомний
+        time.sleep(random.randrange(0, 5))  # рандомний
         self.wfile.write("".encode('utf-8'))
 
 
