@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
-	"log"
 	"math/big"
 	"net/http"
 	"sync"
@@ -15,7 +14,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-var slaves = []string{
+var replicas = []string{
 	"http://slave1:9001/internal/post",
 	"http://slave2:9001/internal/post",
 }
@@ -67,14 +66,9 @@ type ConsumeResponse struct {
 
 // END:types
 
-// START:produce
+// START:handleProduce
 func (s *httpServer) handleProduce(w http.ResponseWriter, r *http.Request) {
-	var record Record
 	var produceRequest ProduceRequest
-	var respErrors []error
-	var wg sync.WaitGroup
-
-	e := make(chan error)
 
 	err := json.NewDecoder(r.Body).Decode(&produceRequest)
 	if err != nil {
@@ -82,75 +76,84 @@ func (s *httpServer) handleProduce(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	record, _ = s.Log.AddOffset(produceRequest.Record)
-
 	switch s.ServerType {
 	case "master":
-		// If w-value is equal to 1, then don't wait for slaves'
-		// responses before writing.
-		if produceRequest.W == 1 {
-			s.writeLog(record, w)
-		}
-		go func() {
-			for _, url := range slaves {
-				wg.Add(1)
-				go s.replicateProduce(url, record, e, &wg)
-			}
-			// Close the channel in the background.
+		var respErrors []error
+		var record Record
+
+		record, _ = s.Log.AddOffset(produceRequest.Record)
+		s.Log.Append(record)
+
+		switch produceRequest.W {
+		case 1:
+			go s.replicate(replicas, record, nil)
+			s.writeResponse(record, w)
+		case 2:
+			e := make(chan error)
+			go s.replicate(replicas, record, e)
 			go func() {
-				wg.Wait()
-				close(e)
+				for respError := range e {
+					respErrors = append(respErrors, respError)
+				}
 			}()
-			// Read from error (e) channel as they come in until its closed.
-			for respError := range e {
-				respErrors = append(respErrors, respError)
-				// If w-value is equal to 2, then wait for one response
-				// from any secondary before writing.
-				if produceRequest.W == 2 && len(respErrors) == 1 {
-					s.writeLog(record, w)
-				}
+			for len(respErrors) < 1 {
+				continue
 			}
-			for _, err := range respErrors {
-				if err != nil {
-					http.Error(
-						w,
-						err.Error(),
-						http.StatusInternalServerError,
-					)
-					return
-				}
-			}
-			// If w-value is equal to 3, then wait for responses from both slaves
-			// before writing.
-			if produceRequest.W == 3 {
-				s.writeLog(record, w)
-			}
-		}()
+			s.writeResponse(record, w)
+		case 3:
+			s.replicate(replicas, record, nil)
+			s.writeResponse(record, w)
+		}
 	case "slave":
 		waitSecs, _ := rand.Int(rand.Reader, big.NewInt(20))
 		logrus.Infof("Waiting %d seconds before responding.", waitSecs)
 		time.Sleep(time.Duration(waitSecs.Int64()) * time.Second)
-		s.writeLog(record, w)
+		s.Log.Append(produceRequest.Record)
+		s.writeResponse(produceRequest.Record, w)
 	}
 }
 
-// END:produce
+// END:handleProduce
 
-// START:writeLog
-func (s *httpServer) writeLog(record Record, w http.ResponseWriter) {
-	s.Log.Append(record)
-
+// START:writeResponse
+func (s *httpServer) writeResponse(record Record, w http.ResponseWriter) {
 	res := ProduceResponse{Offset: record.Offset}
 	err := json.NewEncoder(w).Encode(res)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
 }
 
+// END:writeResponse
+
+// START:replicate
+func (s *httpServer) replicate(replicas []string, record Record, errChan chan<- error) {
+	var wg sync.WaitGroup
+
+	e := make(chan error)
+
+	for _, url := range replicas {
+		wg.Add(1)
+		go replicateProduce(url, record, e, &wg)
+	}
+	// Close the channel in the background.
+	go func() {
+		wg.Wait()
+		close(e)
+	}()
+	// Read from error (e) channel as they come in until its closed.
+	for respError := range e {
+		if errChan != nil {
+			errChan <- respError
+		}
+	}
+}
+
+// END:replicate
+
 // START:replicateProduce
-func (s *httpServer) replicateProduce(url string, record Record, errChan chan<- error, wg *sync.WaitGroup) {
+func replicateProduce(url string, record Record, errChan chan<- error, wg *sync.WaitGroup) {
 	defer wg.Done()
 	jsonValue, _ := json.Marshal(record)
 	req, _ := http.NewRequest("POST", url, bytes.NewBuffer(jsonValue))
@@ -159,7 +162,7 @@ func (s *httpServer) replicateProduce(url string, record Record, errChan chan<- 
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Println(err)
+		logrus.Warn(err)
 		errChan <- err
 	}
 	defer resp.Body.Close()
