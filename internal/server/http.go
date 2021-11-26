@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 )
 
 var replicas = []string{
@@ -53,7 +53,7 @@ func newHTTPServer(serverType string) *httpServer {
 
 type ProduceRequest struct {
 	Record Record `json:"record"`
-	W      int8   `json:"w,omitempty"`
+	W      int    `json:"w,omitempty"`
 }
 
 type ProduceResponse struct {
@@ -78,35 +78,19 @@ func (s *httpServer) handleProduce(w http.ResponseWriter, r *http.Request) {
 
 	switch s.ServerType {
 	case "master":
-		var respErrors []error
-		var record Record
+		var wg sync.WaitGroup
 
-		record, _ = s.Log.AddOffset(produceRequest.Record)
-		s.Log.Append(record)
+		produceRequest.Record, _ = s.Log.AddOffset(produceRequest.Record)
+		s.Log.Append(produceRequest.Record)
 
-		switch produceRequest.W {
-		case 1:
-			go s.replicate(replicas, record, nil)
-			s.writeResponse(record, w)
-		case 2:
-			e := make(chan error)
-			go s.replicate(replicas, record, e)
-			go func() {
-				for respError := range e {
-					respErrors = append(respErrors, respError)
-				}
-			}()
-			for len(respErrors) < 1 {
-				continue
-			}
-			s.writeResponse(record, w)
-		case 3:
-			s.replicate(replicas, record, nil)
-			s.writeResponse(record, w)
-		}
+		wg.Add(produceRequest.W - 1)
+		go s.replicate(replicas, produceRequest, &wg)
+		wg.Wait()
+		s.writeResponse(produceRequest.Record, w)
+
 	case "slave":
 		waitSecs, _ := rand.Int(rand.Reader, big.NewInt(20))
-		logrus.Infof("Waiting %d seconds before responding.", waitSecs)
+		log.Infof("Waiting %d seconds before responding.", waitSecs)
 		time.Sleep(time.Duration(waitSecs.Int64()) * time.Second)
 		s.Log.Append(produceRequest.Record)
 		s.writeResponse(produceRequest.Record, w)
@@ -128,24 +112,26 @@ func (s *httpServer) writeResponse(record Record, w http.ResponseWriter) {
 // END:writeResponse
 
 // START:replicate
-func (s *httpServer) replicate(replicas []string, record Record, errChan chan<- error) {
-	var wg sync.WaitGroup
+func (s *httpServer) replicate(replicas []string, produceRequest ProduceRequest, wg *sync.WaitGroup) {
+	var respErrors []error
+	var replicasWG sync.WaitGroup
 
 	e := make(chan error)
 
 	for _, url := range replicas {
-		wg.Add(1)
-		go replicateProduce(url, record, e, &wg)
+		replicasWG.Add(1)
+		go replicateProduce(url, produceRequest.Record, e, &replicasWG)
 	}
 	// Close the channel in the background.
 	go func() {
-		wg.Wait()
+		replicasWG.Wait()
 		close(e)
 	}()
 	// Read from error (e) channel as they come in until its closed.
 	for respError := range e {
-		if errChan != nil {
-			errChan <- respError
+		respErrors = append(respErrors, respError)
+		if len(respErrors) < produceRequest.W {
+			wg.Done()
 		}
 	}
 }
@@ -162,7 +148,9 @@ func replicateProduce(url string, record Record, errChan chan<- error, wg *sync.
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		logrus.Warn(err)
+		log.WithFields(log.Fields{
+			"StatusCode": resp.StatusCode,
+		}).Warn(err)
 		errChan <- err
 	}
 	defer resp.Body.Close()
