@@ -80,8 +80,7 @@ func (s *httpServer) handleProduce(w http.ResponseWriter, r *http.Request) {
 	case "master":
 		var wg sync.WaitGroup
 
-		produceRequest.Record, _ = s.Log.AddOffset(produceRequest.Record)
-		s.Log.Append(produceRequest.Record)
+		produceRequest.Record = s.Log.Append(produceRequest.Record)
 
 		wg.Add(produceRequest.W - 1)
 		go s.replicate(replicas, produceRequest, &wg)
@@ -114,19 +113,12 @@ func (s *httpServer) writeResponse(record Record, w http.ResponseWriter) {
 // START:replicate
 func (s *httpServer) replicate(replicas []string, produceRequest ProduceRequest, wg *sync.WaitGroup) {
 	var respErrors []error
-	var replicasWG sync.WaitGroup
 
 	e := make(chan error)
 
 	for _, url := range replicas {
-		replicasWG.Add(1)
-		go replicateProduce(url, produceRequest.Record, e, &replicasWG)
+		go replicateProduce(url, produceRequest.Record, e)
 	}
-	// Close the channel in the background.
-	go func() {
-		replicasWG.Wait()
-		close(e)
-	}()
 	// Read from error (e) channel as they come in until its closed.
 	for respError := range e {
 		respErrors = append(respErrors, respError)
@@ -139,8 +131,7 @@ func (s *httpServer) replicate(replicas []string, produceRequest ProduceRequest,
 // END:replicate
 
 // START:replicateProduce
-func replicateProduce(url string, record Record, errChan chan<- error, wg *sync.WaitGroup) {
-	defer wg.Done()
+func replicateProduce(url string, record Record, errChan chan<- error) {
 	jsonValue, _ := json.Marshal(record)
 	req, _ := http.NewRequest("POST", url, bytes.NewBuffer(jsonValue))
 	req.Header.Set("Content-Type", "application/json")
