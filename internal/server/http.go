@@ -64,6 +64,11 @@ type ConsumeResponse struct {
 	Records []Record `json:"records"`
 }
 
+type ProduceSecondaryResponse struct {
+	StatusCode int
+	Error      error
+}
+
 // END:types
 
 // START:handleProduce
@@ -112,26 +117,27 @@ func (s *httpServer) writeResponse(record Record, w http.ResponseWriter) {
 
 // START:replicate
 func (s *httpServer) replicate(replicas []string, produceRequest ProduceRequest, wg *sync.WaitGroup) {
-	var respErrors []error
+	var responses []ProduceSecondaryResponse
 
-	e := make(chan error)
+	e := make(chan ProduceSecondaryResponse)
 
 	for _, url := range replicas {
 		go replicateProduce(url, produceRequest.Record, e)
 	}
 	// Read from error (e) channel as they come in until its closed.
-	for respError := range e {
-		respErrors = append(respErrors, respError)
-		if len(respErrors) < produceRequest.W {
+	for resp := range e {
+		responses = append(responses, resp)
+		if len(responses) < produceRequest.W && resp.StatusCode == 200 {
 			wg.Done()
 		}
+		//TODO: if resp.StatusCode != 200 { go replicateProduce(...) }
 	}
 }
 
 // END:replicate
 
 // START:replicateProduce
-func replicateProduce(url string, record Record, errChan chan<- error) {
+func replicateProduce(url string, record Record, respChan chan<- ProduceSecondaryResponse) {
 	jsonValue, _ := json.Marshal(record)
 	req, _ := http.NewRequest("POST", url, bytes.NewBuffer(jsonValue))
 	req.Header.Set("Content-Type", "application/json")
@@ -142,14 +148,23 @@ func replicateProduce(url string, record Record, errChan chan<- error) {
 		log.WithFields(log.Fields{
 			"StatusCode": resp.StatusCode,
 		}).Warn(err)
-		errChan <- err
+		respChan <- ProduceSecondaryResponse{
+			StatusCode: resp.StatusCode,
+			Error:      err,
+		}
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		errChan <- errors.New(resp.Status)
+		respChan <- ProduceSecondaryResponse{
+			StatusCode: resp.StatusCode,
+			Error:      errors.New(resp.Status),
+		}
 	}
-	errChan <- nil
+	respChan <- ProduceSecondaryResponse{
+		StatusCode: resp.StatusCode,
+		Error:      nil,
+	}
 }
 
 // END:replicateProduce
