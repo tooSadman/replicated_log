@@ -2,6 +2,7 @@
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import time
+import random
 from multiprocessing import Lock
 
 
@@ -32,15 +33,16 @@ class S(BaseHTTPRequestHandler):
 
     def append_message_to_log(self, message):
         var = Lock().acquire(block=True, timeout=-1)
-        print(var)
+        print(f"Lock status: {var}")
+
         # deduplication
         msg_offset = message["Offset"]
         existing_offsets = []
         if len(self.server.log["records"]) != 0:
             existing_offsets = [line["Offset"] for line in self.server.log["records"]]
-        print(msg_offset, existing_offsets)
         if msg_offset not in existing_offsets:
             self.server.log["records"].append(message)
+            print(f"Message '{message}' has been written to slave1")
         else:
             print("Existing message duplicate")
 
@@ -55,6 +57,12 @@ class S(BaseHTTPRequestHandler):
 
         # appropriate fmt
         loaded_json = json.loads(post_data)
+
+        #random delay
+        delay = random.randint(2, 10)
+        print(f"Random delay on slave1: {delay}")
+        time.sleep(delay)
+
         if type(loaded_json) == type(dict()):
             self.append_message_to_log(loaded_json)
         elif type(loaded_json) == type(list()):
@@ -65,7 +73,6 @@ class S(BaseHTTPRequestHandler):
             self.wfile.write("".encode('utf-8'))
             return
 
-        time.sleep(5)
         self._set_headers()
         self.wfile.write("".encode('utf-8'))
 
