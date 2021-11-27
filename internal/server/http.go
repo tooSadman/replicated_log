@@ -146,13 +146,11 @@ func replicateProduce(url string, record Record, respChan chan<- ProduceSecondar
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		log.WithFields(log.Fields{
-			"StatusCode": resp.StatusCode,
-		}).Warn(err)
+		log.Warn(err)
 		respChan <- ProduceSecondaryResponse{
-			StatusCode: resp.StatusCode,
-			Error:      err,
+			Error: err,
 		}
+		return
 	}
 	defer resp.Body.Close()
 
