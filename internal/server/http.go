@@ -5,9 +5,9 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -83,13 +83,14 @@ func (s *httpServer) handleProduce(w http.ResponseWriter, r *http.Request) {
 
 	switch s.ServerType {
 	case "master":
-		var wg sync.WaitGroup
-
+		quit := make(chan bool, produceRequest.W)
 		produceRequest.Record = s.Log.Append(produceRequest.Record)
 
-		wg.Add(produceRequest.W - 1)
-		go s.replicate(replicas, produceRequest, &wg)
-		wg.Wait()
+		go s.replicate(replicas, produceRequest, quit)
+		for j := 1; j < produceRequest.W; j++ {
+			<-quit
+		}
+		close(quit)
 		s.writeResponse(produceRequest.Record, w)
 
 	case "slave":
@@ -116,9 +117,8 @@ func (s *httpServer) writeResponse(record Record, w http.ResponseWriter) {
 // END:writeResponse
 
 // START:replicate
-func (s *httpServer) replicate(replicas []string, produceRequest ProduceRequest, wg *sync.WaitGroup) {
-	var responses []ProduceSecondaryResponse
-
+func (s *httpServer) replicate(replicas []string, produceRequest ProduceRequest, quit chan bool) {
+	var i int
 	e := make(chan ProduceSecondaryResponse)
 
 	for _, url := range replicas {
@@ -126,10 +126,11 @@ func (s *httpServer) replicate(replicas []string, produceRequest ProduceRequest,
 	}
 	// Read from error (e) channel as they come in until its closed.
 	for resp := range e {
-		responses = append(responses, resp)
-		if len(responses) < produceRequest.W && resp.StatusCode == 200 {
-			wg.Done()
+		i++
+		if i < produceRequest.W && resp.StatusCode == 200 {
+			quit <- true
 		}
+		fmt.Println(resp)
 		//TODO: if resp.StatusCode != 200 { go replicateProduce(...) }
 	}
 }
