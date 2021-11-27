@@ -1,6 +1,8 @@
 FROM golang:1.17.2-alpine3.14 AS gobuild
 RUN apk add --no-cache build-base
 COPY go.* /tmp/go-build/
+RUN cd /tmp/go-build/ \
+    && go mod download
 COPY cmd /tmp/go-build/cmd/
 COPY internal /tmp/go-build/internal/
 RUN cd /tmp/go-build \
