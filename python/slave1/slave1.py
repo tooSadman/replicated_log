@@ -21,7 +21,7 @@ class S(BaseHTTPRequestHandler):
         # total order
         dump = {"records": []}
         for i in range(len(self.server.log["records"])):
-            if i == self.server.log["records"][i]["Offset"]:
+            if i == self.server.log["records"][i]["offset"]:
                 dump["records"].append(self.server.log["records"][i])
             else:
                 break
@@ -36,18 +36,20 @@ class S(BaseHTTPRequestHandler):
         print(f"Lock status: {var}")
 
         # deduplication
-        msg_offset = message["Offset"]
+        msg_offset = message["offset"]
         existing_offsets = []
         if len(self.server.log["records"]) != 0:
-            existing_offsets = [line["Offset"] for line in self.server.log["records"]]
+            existing_offsets = [line["offset"]
+                                for line in self.server.log["records"]]
         if msg_offset not in existing_offsets:
             self.server.log["records"].append(message)
-            print(f"Message '{message}' has been written to slave1")
+            print(f"Message '{msg_offset}' has been written to slave1")
         else:
             print("Existing message duplicate")
 
         # ordering
-        self.server.log["records"] = sorted(self.server.log["records"], key=lambda d: d['Offset'])
+        self.server.log["records"] = sorted(
+            self.server.log["records"], key=lambda d: d['offset'])
 
     def do_POST(self):
         # <--- Gets the size of data
@@ -58,7 +60,7 @@ class S(BaseHTTPRequestHandler):
         # appropriate fmt
         loaded_json = json.loads(post_data)
 
-        #random delay
+        # random delay
         delay = random.randint(2, 10)
         print(f"Random delay on slave1: {delay}")
         time.sleep(delay)
