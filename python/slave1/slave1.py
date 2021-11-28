@@ -88,11 +88,11 @@ class S(BaseHTTPRequestHandler):
             if len(self.server.log["records"]) != 0:
                 existing_offsets = [line["offset"]
                                     for line in self.server.log["records"]]
-                for i in range(last_offset):
+                for i in range(last_offset+1):
                     if i not in existing_offsets:
                         response["offsets"].append(i)
             else:
-                response['offsets'] = list(range(last_offset))
+                response['offsets'] = list(range(last_offset+1))
 
             data = json.dumps(response)
             self._set_headers(content_type='json')
