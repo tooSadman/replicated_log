@@ -3,10 +3,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import time
 import random
-from multiprocessing import Lock
+from threading import Lock
 
 
 class S(BaseHTTPRequestHandler):
+    locker = Lock()
+
     def _set_headers(self, status_code=200, content_type='html'):
         self.send_response(status_code)
         content = ''
@@ -32,7 +34,7 @@ class S(BaseHTTPRequestHandler):
         self.wfile.write(body.encode('utf-8'))
 
     def append_message_to_log(self, message):
-        var = Lock().acquire(block=True, timeout=-1)
+        var = self.locker.acquire(blocking=True, timeout=-1)
         print(f"Lock status: {var}")
 
         # deduplication
@@ -51,28 +53,54 @@ class S(BaseHTTPRequestHandler):
         self.server.log["records"] = sorted(
             self.server.log["records"], key=lambda d: d['offset'])
 
+        self.locker.release()
+
     def do_POST(self):
         # <--- Gets the size of data
         content_length = int(self.headers['Content-Length'])
         # <--- Gets the data itself
         post_data = self.rfile.read(content_length)
 
+        print(self.path)
+
         # appropriate fmt
         loaded_json = json.loads(post_data)
 
-        # random delay
-        delay = random.randint(2, 10)
-        print(f"Random delay on slave1: {delay}")
-        time.sleep(delay)
+        if self.path == '/internal/post':
+            # random delay
+            delay = random.randint(2, 10)
+            print(f"Random delay on slave1: {delay}")
+            time.sleep(delay)
 
-        if 'records' in loaded_json.keys():
-            for msg in loaded_json['records']:
-                self.append_message_to_log(msg)
-        else:
-            self.append_message_to_log(loaded_json)
+            if 'records' in loaded_json.keys():
+                for msg in loaded_json['records']:
+                    self.append_message_to_log(msg)
+            else:
+                self.append_message_to_log(loaded_json)
 
-        self._set_headers()
-        self.wfile.write("".encode('utf-8'))
+            self._set_headers()
+            self.wfile.write("".encode('utf-8'))
+
+        elif self.path == '/internal/sync':
+            last_offset = loaded_json
+            response = {'offsets': []}
+
+            if len(self.server.log["records"]) != 0:
+                existing_offsets = [line["offset"]
+                                    for line in self.server.log["records"]]
+                for i in range(last_offset):
+                    if i not in existing_offsets:
+                        response["offsets"].append(i)
+            else:
+                response['offsets'] = list(range(last_offset))
+
+            data = json.dumps(response)
+            self._set_headers(content_type='json')
+            self.wfile.write(data.encode('utf-8'))
+
+        elif self.path == '/health':
+            self._set_headers()
+            self.wfile.write("".encode('utf-8'))
 
 
 def run(server_class=ThreadingHTTPServer, handler_class=S, port=9001):
