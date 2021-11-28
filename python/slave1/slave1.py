@@ -65,15 +65,11 @@ class S(BaseHTTPRequestHandler):
         print(f"Random delay on slave1: {delay}")
         time.sleep(delay)
 
-        if type(loaded_json) == type(dict()):
-            self.append_message_to_log(loaded_json)
-        elif type(loaded_json) == type(list()):
-            for msg in loaded_json:
+        if 'records' in loaded_json.keys():
+            for msg in loaded_json['records']:
                 self.append_message_to_log(msg)
         else:
-            self._set_headers(status_code=415)
-            self.wfile.write("".encode('utf-8'))
-            return
+            self.append_message_to_log(loaded_json)
 
         self._set_headers()
         self.wfile.write("".encode('utf-8'))
