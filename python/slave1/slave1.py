@@ -82,7 +82,7 @@ class S(BaseHTTPRequestHandler):
             self.wfile.write("".encode('utf-8'))
 
         elif self.path == '/internal/sync':
-            last_offset = loaded_json
+            last_offset = loaded_json['offset']
             response = {'offsets': []}
 
             if len(self.server.log["records"]) != 0:
