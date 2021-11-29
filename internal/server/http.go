@@ -4,10 +4,9 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"math/big"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -83,14 +82,18 @@ func (s *httpServer) handleProduce(w http.ResponseWriter, r *http.Request) {
 
 	switch s.ServerType {
 	case "master":
-		quit := make(chan bool, produceRequest.W)
+		var wg sync.WaitGroup
+
 		produceRequest.Record = s.Log.Append(produceRequest.Record)
 
-		go s.replicate(replicas, produceRequest, quit)
-		for j := 1; j < produceRequest.W; j++ {
-			<-quit
+		i := produceRequest.W - 1
+
+		wg.Add(i)
+		for _, url := range replicas {
+			go replicateProduce(&i, &wg, url, produceRequest)
 		}
-		close(quit)
+		wg.Wait()
+
 		s.writeResponse(produceRequest.Record, w)
 
 	case "slave":
@@ -116,30 +119,9 @@ func (s *httpServer) writeResponse(record Record, w http.ResponseWriter) {
 
 // END:writeResponse
 
-// START:replicate
-func (s *httpServer) replicate(replicas []string, produceRequest ProduceRequest, quit chan bool) {
-	var i int
-	e := make(chan ProduceSecondaryResponse)
-
-	for _, url := range replicas {
-		go replicateProduce(url, produceRequest.Record, e)
-	}
-	// Read from error (e) channel as they come in until its closed.
-	for resp := range e {
-		i++
-		if i < produceRequest.W && resp.StatusCode == 200 {
-			quit <- true
-		}
-		fmt.Println(resp)
-		//TODO: if resp.StatusCode != 200 { go replicateProduce(...) }
-	}
-}
-
-// END:replicate
-
 // START:replicateProduce
-func replicateProduce(url string, record Record, respChan chan<- ProduceSecondaryResponse) {
-	jsonValue, _ := json.Marshal(record)
+func replicateProduce(i *int, wg *sync.WaitGroup, url string, produceRequest ProduceRequest) {
+	jsonValue, _ := json.Marshal(produceRequest.Record)
 	req, _ := http.NewRequest("POST", url, bytes.NewBuffer(jsonValue))
 	req.Header.Set("Content-Type", "application/json")
 
@@ -147,22 +129,15 @@ func replicateProduce(url string, record Record, respChan chan<- ProduceSecondar
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Warn(err)
-		respChan <- ProduceSecondaryResponse{
-			Error: err,
-		}
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		respChan <- ProduceSecondaryResponse{
-			StatusCode: resp.StatusCode,
-			Error:      errors.New(resp.Status),
-		}
-	}
-	respChan <- ProduceSecondaryResponse{
-		StatusCode: resp.StatusCode,
-		Error:      nil,
+		//run function again
+	} else if resp.StatusCode == 200 && *i < produceRequest.W && *i > 0 {
+		*i++
+		wg.Done()
 	}
 }
 
