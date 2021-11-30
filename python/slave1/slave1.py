@@ -39,7 +39,6 @@ class S(BaseHTTPRequestHandler):
 
     def append_message_to_log(self, message):
         var = self.locker.acquire(blocking=True, timeout=-1)
-        print(f"Lock status: {var}")
 
         # deduplication
         msg_offset = message["offset"]
@@ -51,7 +50,7 @@ class S(BaseHTTPRequestHandler):
             self.server.log["records"].append(message)
             print(f"Message '{msg_offset}' has been written to slave1")
         else:
-            print("Existing message duplicate")
+            print(f"Existing message {msg_offset} duplicate")
 
         # ordering
         self.server.log["records"] = sorted(
@@ -64,8 +63,6 @@ class S(BaseHTTPRequestHandler):
         content_length = int(self.headers['Content-Length'])
         # <--- Gets the data itself
         post_data = self.rfile.read(content_length)
-
-        print(self.path)
 
         # appropriate fmt
         loaded_json = json.loads(post_data)
@@ -86,6 +83,7 @@ class S(BaseHTTPRequestHandler):
             p = 3
             is_error = random.randint(0, p * p - 1) % p == 0
             if is_error:
+                print("Internal Server Error")
                 self._set_headers(status_code=500)
             else:
                 self._set_headers()
