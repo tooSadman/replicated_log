@@ -30,7 +30,6 @@ class S(BaseHTTPRequestHandler):
                     break
 
             body = json.dumps(dump)
-            print(body)
             self._set_headers(content_type='json')
             self.wfile.write(body.encode('utf-8'))
 
