@@ -82,7 +82,13 @@ class S(BaseHTTPRequestHandler):
             else:
                 self.append_message_to_log(loaded_json)
 
-            self._set_headers()
+            # random internal server error
+            p = 3
+            is_error = random.randint(0, p * p - 1) % p == 0
+            if is_error:
+                self._set_headers(status_code=500)
+            else:
+                self._set_headers()
             self.wfile.write("".encode('utf-8'))
 
         elif self.path == '/internal/sync':
