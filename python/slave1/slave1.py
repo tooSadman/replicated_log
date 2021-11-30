@@ -114,6 +114,16 @@ class S(BaseHTTPRequestHandler):
             self._set_headers(content_type='json')
             self.wfile.write(data.encode('utf-8'))
 
+        if self.path == '/internal/post/sync':
+            if 'records' in loaded_json.keys():
+                for msg in loaded_json['records']:
+                    self.append_message_to_log(msg)
+            else:
+                self.append_message_to_log(loaded_json)
+
+            self._set_headers()
+            self.wfile.write("".encode('utf-8'))
+
     def log_message(self, format, *args):
         pass
 
