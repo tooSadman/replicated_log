@@ -21,17 +21,21 @@ class S(BaseHTTPRequestHandler):
 
     def do_GET(self):
         # total order
-        dump = {"records": []}
-        for i in range(len(self.server.log["records"])):
-            if i == self.server.log["records"][i]["offset"]:
-                dump["records"].append(self.server.log["records"][i])
-            else:
-                break
+        if self.path == '/internal/post':
+            dump = {"records": []}
+            for i in range(len(self.server.log["records"])):
+                if i == self.server.log["records"][i]["offset"]:
+                    dump["records"].append(self.server.log["records"][i])
+                else:
+                    break
 
-        body = json.dumps(dump)
-        print(body)
-        self._set_headers(content_type='json')
-        self.wfile.write(body.encode('utf-8'))
+            body = json.dumps(dump)
+            print(body)
+            self._set_headers(content_type='json')
+            self.wfile.write(body.encode('utf-8'))
+        elif self.path == '/internal/health':
+            self._set_headers()
+            self.wfile.write("".encode('utf-8'))
 
     def append_message_to_log(self, message):
         var = self.locker.acquire(blocking=True, timeout=-1)
@@ -98,9 +102,8 @@ class S(BaseHTTPRequestHandler):
             self._set_headers(content_type='json')
             self.wfile.write(data.encode('utf-8'))
 
-        elif self.path == '/health':
-            self._set_headers()
-            self.wfile.write("".encode('utf-8'))
+    def log_message(self, format, *args):
+        pass
 
 
 def run(server_class=ThreadingHTTPServer, handler_class=S, port=9001):
