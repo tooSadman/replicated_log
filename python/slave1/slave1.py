@@ -21,7 +21,7 @@ class S(BaseHTTPRequestHandler):
 
     def do_GET(self):
         # total order
-        if self.path == '/internal/post':
+        if self.path == '/':
             dump = {"records": []}
             for i in range(len(self.server.log["records"])):
                 if i == self.server.log["records"][i]["offset"]:
