@@ -20,8 +20,8 @@ class S(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        # total order
         if self.path == '/':
+            # total order
             dump = {"records": []}
             for i in range(len(self.server.log["records"])):
                 if i == self.server.log["records"][i]["offset"]:
@@ -33,6 +33,7 @@ class S(BaseHTTPRequestHandler):
             print(body)
             self._set_headers(content_type='json')
             self.wfile.write(body.encode('utf-8'))
+
         elif self.path == '/internal/health':
             self._set_headers()
             self.wfile.write("".encode('utf-8'))
@@ -72,6 +73,14 @@ class S(BaseHTTPRequestHandler):
             delay = random.randint(2, 10)
             print(f"Random delay on slave1: {delay}")
             time.sleep(delay)
+
+            p = 4
+            is_error_no_write = random.randint(0, p * p - 1) % p == 0
+            if is_error_no_write:
+                print("Internal Server Error")
+                self._set_headers(status_code=500)
+                self.wfile.write("".encode('utf-8'))
+                return
 
             if 'records' in loaded_json.keys():
                 for msg in loaded_json['records']:
