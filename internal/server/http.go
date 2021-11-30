@@ -143,8 +143,8 @@ func (s *httpServer) writeResponse(record Record, w http.ResponseWriter) {
 
 // START:replicateProduce
 func (s *httpServer) replicateProduce(i *int, wg *sync.WaitGroup, replica string, replicateRequest ReplicateRequest) {
-	for s.Agent.statuses[replica] == unhealthy {
-		time.Sleep(5 * time.Second)
+	for s.Agent.statuses[replica] != healthy {
+		time.Sleep(2 * time.Second)
 	}
 	jsonValue, _ := json.Marshal(replicateRequest)
 	url := fmt.Sprintf("http://%s:9001/internal/post", replica)
@@ -159,9 +159,12 @@ func (s *httpServer) replicateProduce(i *int, wg *sync.WaitGroup, replica string
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
+		log.WithFields(log.Fields{
+			"replica": replica,
+		}).Warn("Internal server error")
 		go s.replicateProduce(i, wg, replica, replicateRequest)
-	} else if resp.StatusCode == 200 && *i > 0 {
+	} else if resp.StatusCode == http.StatusOK && *i > 0 {
 		*i--
 		wg.Done()
 	}
@@ -171,8 +174,8 @@ func (s *httpServer) replicateProduce(i *int, wg *sync.WaitGroup, replica string
 
 // START:replicateProduce
 func (s *httpServer) replicateSync(replica string) error {
-	for s.Agent.statuses[replica] == unhealthy {
-		continue
+	for s.Agent.statuses[replica] != healthy {
+		time.Sleep(1 * time.Second)
 	}
 	jsonValue, _ := json.Marshal(s.Log.records)
 	url := fmt.Sprintf("http://%s:9001/internal/post", replica)
@@ -246,9 +249,11 @@ func (s *httpServer) heartbeat(replica string) {
 	}
 	if resp.StatusCode == 200 && s.Agent.statuses[replica] != healthy {
 		s.Agent.statuses[replica] = healthy
-		err = s.replicateSync(replica)
-		if err != nil {
-			s.Agent.statuses[replica] = suspected
+		if len(s.Log.records) > 0 {
+			err = s.replicateSync(replica)
+			if err != nil {
+				s.Agent.statuses[replica] = suspected
+			}
 		}
 	}
 }
