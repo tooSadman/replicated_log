@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -32,7 +33,7 @@ func NewHTTPServer(addr string, serverType string) *http.Server {
 		r.HandleFunc("/internal/post", httpsrv.handleProduce).Methods("POST")
 	}
 	r.HandleFunc("/", httpsrv.handleConsume).Methods("GET")
-	go httpsrv.Agent.StartHealthChecks()
+	go httpsrv.StartHealthChecks()
 	return &http.Server{
 		Addr:    addr,
 		Handler: r,
@@ -142,7 +143,7 @@ func (s *httpServer) writeResponse(record Record, w http.ResponseWriter) {
 
 // START:replicateProduce
 func (s *httpServer) replicateProduce(i *int, wg *sync.WaitGroup, replica string, replicateRequest ReplicateRequest) {
-	for s.Agent.statuses[replica] != healthy {
+	for s.Agent.statuses[replica] == unhealthy {
 		time.Sleep(5 * time.Second)
 	}
 	jsonValue, _ := json.Marshal(replicateRequest)
@@ -164,6 +165,31 @@ func (s *httpServer) replicateProduce(i *int, wg *sync.WaitGroup, replica string
 		*i--
 		wg.Done()
 	}
+}
+
+// END:replicateProduce
+
+// START:replicateProduce
+func (s *httpServer) replicateSync(replica string) error {
+	for s.Agent.statuses[replica] == unhealthy {
+		continue
+	}
+	jsonValue, _ := json.Marshal(s.Log.records)
+	url := fmt.Sprintf("http://%s:9001/internal/post", replica)
+	req, _ := http.NewRequest("POST", url, bytes.NewBuffer(jsonValue))
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return errors.New(resp.Status)
+	}
+	return nil
 }
 
 // END:replicateProduce
@@ -195,3 +221,34 @@ func (s *httpServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 // END:handleHealth
+
+func (s *httpServer) StartHealthChecks() {
+	for {
+		for replica := range s.Agent.statuses {
+			go s.heartbeat(replica)
+		}
+		time.Sleep(5 * time.Second)
+	}
+}
+
+func (s *httpServer) heartbeat(replica string) {
+	url := fmt.Sprintf("http://%s:9001/internal/health", replica)
+	resp, err := http.Get(url)
+	if err != nil {
+		log.Warn(err)
+		switch s.Agent.statuses[replica] {
+		case healthy:
+			s.Agent.statuses[replica] = suspected
+		case suspected:
+			s.Agent.statuses[replica] = unhealthy
+		}
+		return
+	}
+	if resp.StatusCode == 200 && s.Agent.statuses[replica] != healthy {
+		s.Agent.statuses[replica] = healthy
+		err = s.replicateSync(replica)
+		if err != nil {
+			s.Agent.statuses[replica] = suspected
+		}
+	}
+}
