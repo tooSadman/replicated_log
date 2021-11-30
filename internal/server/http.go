@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"math/big"
 	"net/http"
 	"sync"
@@ -13,10 +14,11 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-var replicas = []string{
-	"http://slave1:9001/internal/post",
-	"http://slave2:9001/internal/post",
-}
+//var replicas = []string{
+//	"http://slave1:9001/internal/post",
+//	"http://slave2:9001/internal/post",
+//}
+var replicas int = 2
 
 // START: newhttpserver
 func NewHTTPServer(addr string, serverType string) *http.Server {
@@ -25,10 +27,12 @@ func NewHTTPServer(addr string, serverType string) *http.Server {
 	switch httpsrv.ServerType {
 	case "master":
 		r.HandleFunc("/", httpsrv.handleProduce).Methods("POST")
+		r.HandleFunc("/health", httpsrv.handleHealth).Methods("GET")
 	case "slave":
 		r.HandleFunc("/internal/post", httpsrv.handleProduce).Methods("POST")
 	}
 	r.HandleFunc("/", httpsrv.handleConsume).Methods("GET")
+	go httpsrv.Agent.StartHealthChecks()
 	return &http.Server{
 		Addr:    addr,
 		Handler: r,
@@ -41,18 +45,33 @@ func NewHTTPServer(addr string, serverType string) *http.Server {
 type httpServer struct {
 	Log        *Log
 	ServerType string
+	Agent      *Agent
 }
 
 func newHTTPServer(serverType string) *httpServer {
+	replicasUrl := newReplicas(replicas)
 	return &httpServer{
 		Log:        NewLog(),
 		ServerType: serverType,
+		Agent:      NewAgent(replicasUrl),
 	}
+}
+
+func newReplicas(i int) []string {
+	var replicas []string
+	for k := 1; k <= i; k++ {
+		replicas = append(replicas, fmt.Sprintf("slave%d", k))
+	}
+	return replicas
 }
 
 type ProduceRequest struct {
 	Record Record `json:"record"`
 	W      int    `json:"w,omitempty"`
+}
+
+type ReplicateRequest struct {
+	Records []Record `json:"records"`
 }
 
 type ProduceResponse struct {
@@ -88,9 +107,11 @@ func (s *httpServer) handleProduce(w http.ResponseWriter, r *http.Request) {
 
 		i := produceRequest.W - 1
 
+		replicateRequest := ReplicateRequest{Records: []Record{produceRequest.Record}}
+
 		wg.Add(i)
-		for _, url := range replicas {
-			go replicateProduce(&i, &wg, url, produceRequest)
+		for _, replica := range newReplicas(replicas) {
+			go s.replicateProduce(&i, &wg, replica, replicateRequest)
 		}
 		wg.Wait()
 
@@ -120,8 +141,12 @@ func (s *httpServer) writeResponse(record Record, w http.ResponseWriter) {
 // END:writeResponse
 
 // START:replicateProduce
-func replicateProduce(i *int, wg *sync.WaitGroup, url string, produceRequest ProduceRequest) {
-	jsonValue, _ := json.Marshal(produceRequest.Record)
+func (s *httpServer) replicateProduce(i *int, wg *sync.WaitGroup, replica string, replicateRequest ReplicateRequest) {
+	for s.Agent.statuses[replica] != healthy {
+		time.Sleep(5 * time.Second)
+	}
+	jsonValue, _ := json.Marshal(replicateRequest)
+	url := fmt.Sprintf("http://%s:9001/internal/post", replica)
 	req, _ := http.NewRequest("POST", url, bytes.NewBuffer(jsonValue))
 	req.Header.Set("Content-Type", "application/json")
 
@@ -134,9 +159,9 @@ func replicateProduce(i *int, wg *sync.WaitGroup, url string, produceRequest Pro
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		//run function again
-	} else if resp.StatusCode == 200 && *i < produceRequest.W && *i > 0 {
-		*i++
+		go s.replicateProduce(i, wg, replica, replicateRequest)
+	} else if resp.StatusCode == 200 && *i > 0 {
+		*i--
 		wg.Done()
 	}
 }
@@ -159,3 +184,14 @@ func (s *httpServer) handleConsume(w http.ResponseWriter, r *http.Request) {
 }
 
 // END:consume
+
+// START:handleHealth
+func (s *httpServer) handleHealth(w http.ResponseWriter, r *http.Request) {
+	err := json.NewEncoder(w).Encode(s.Agent.statuses)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+}
+
+// END:handleHealth
