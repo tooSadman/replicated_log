@@ -145,8 +145,17 @@ func (s *httpServer) writeResponse(record Record, w http.ResponseWriter) {
 
 // START:replicateProduce
 func (s *httpServer) replicateProduce(i *int, wg *sync.WaitGroup, replica string, replicateRequest ReplicateRequest) {
+	timeout := time.After(5 * time.Second)
 	for s.Agent.statuses[replica] != healthy {
-		time.Sleep(2 * time.Second)
+		select {
+		case <-timeout:
+			log.WithFields(log.Fields{
+				"replica": replica,
+			}).Warn("Timeout was reached, aborting!")
+			return
+		default:
+			continue
+		}
 	}
 	jsonValue, _ := json.Marshal(replicateRequest)
 	url := fmt.Sprintf("http://%s:9001/internal/post", replica)
