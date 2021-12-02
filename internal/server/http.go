@@ -15,10 +15,6 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-//var replicas = []string{
-//	"http://slave1:9001/internal/post",
-//	"http://slave2:9001/internal/post",
-//}
 var replicas int = 2
 
 // START: newhttpserver
@@ -47,6 +43,7 @@ type httpServer struct {
 	Log        *Log
 	ServerType string
 	Agent      *Agent
+	Consensus  bool
 }
 
 func newHTTPServer(serverType string) *httpServer {
@@ -55,6 +52,7 @@ func newHTTPServer(serverType string) *httpServer {
 		Log:        NewLog(),
 		ServerType: serverType,
 		Agent:      NewAgent(replicasUrl),
+		Consensus:  false,
 	}
 }
 
@@ -102,6 +100,10 @@ func (s *httpServer) handleProduce(w http.ResponseWriter, r *http.Request) {
 
 	switch s.ServerType {
 	case "master":
+		if !s.Consensus {
+			http.Error(w, "Consensus wasn't reach!", http.StatusNotAcceptable)
+			return
+		}
 		var wg sync.WaitGroup
 
 		produceRequest.Record = s.Log.Append(produceRequest.Record)
@@ -174,11 +176,15 @@ func (s *httpServer) replicateProduce(i *int, wg *sync.WaitGroup, replica string
 
 // START:replicateProduce
 func (s *httpServer) replicateSync(replica string) error {
+	log.WithFields(log.Fields{
+		"replica": replica,
+	}).Info("Started replication.")
 	for s.Agent.statuses[replica] != healthy {
 		time.Sleep(1 * time.Second)
 	}
-	jsonValue, _ := json.Marshal(s.Log.records)
-	url := fmt.Sprintf("http://%s:9001/internal/post", replica)
+	jsonValue, _ := json.Marshal(ReplicateRequest{Records: s.Log.records})
+	fmt.Println(string(jsonValue))
+	url := fmt.Sprintf("http://%s:9001/internal/post/sync", replica)
 	req, _ := http.NewRequest("POST", url, bytes.NewBuffer(jsonValue))
 	req.Header.Set("Content-Type", "application/json")
 
@@ -231,6 +237,17 @@ func (s *httpServer) StartHealthChecks() {
 			go s.heartbeat(replica)
 		}
 		time.Sleep(5 * time.Second)
+		i := 1
+		for _, status := range s.Agent.statuses {
+			if status == healthy {
+				i++
+			}
+		}
+		if i > ((replicas + 1) / 2) {
+			s.Consensus = true
+		} else {
+			s.Consensus = false
+		}
 	}
 }
 
@@ -238,17 +255,22 @@ func (s *httpServer) heartbeat(replica string) {
 	url := fmt.Sprintf("http://%s:9001/internal/health", replica)
 	resp, err := http.Get(url)
 	if err != nil {
-		log.Warn(err)
 		switch s.Agent.statuses[replica] {
 		case healthy:
 			s.Agent.statuses[replica] = suspected
 		case suspected:
+			log.WithFields(log.Fields{
+				"replica": replica,
+			}).Warn("Replica is unhealthy!")
 			s.Agent.statuses[replica] = unhealthy
 		}
 		return
 	}
 	if resp.StatusCode == 200 && s.Agent.statuses[replica] != healthy {
 		s.Agent.statuses[replica] = healthy
+		log.WithFields(log.Fields{
+			"replica": replica,
+		}).Info("Replica is healthy!")
 		if len(s.Log.records) > 0 {
 			err = s.replicateSync(replica)
 			if err != nil {
